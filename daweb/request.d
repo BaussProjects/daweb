@@ -15,7 +15,7 @@ import daweb.mime;
 /**
 *	The default page.
 */
-private const string defaultPage = "index.html";
+private const string defaultPage = "index.dml";
 
 /**
 *	A http request wrapper.
@@ -79,6 +79,10 @@ private:
 	*	The mime type.
 	*/
 	string m_mime;
+	/**
+	*	The content length.
+	*/
+	ptrdiff_t m_contentLength;
 	
 	/**
 	*	Set to true if the request is valid.
@@ -92,12 +96,17 @@ public:
 		m_remoteAddress = ip;
 		
 		string httpHead = head.dup;
-		httpHead = replace(httpHead, "\r", "");
+		//httpHead = replace(httpHead, "\r", "");
 		
 		bool foundMethod = false;
 		
 		auto lines = split(httpHead, "\n");
-		foreach (line; lines) {
+		
+		ptrdiff_t contentLine;
+		foreach (i; 0 .. lines.length) {
+			string line = replace(lines[i], "\r", "");
+			string originalLine = lines[i];
+	
 			if (!line)
 				continue;
 			if (!line.length)
@@ -121,6 +130,9 @@ public:
 						m_requestPath = defaultPage;
 					}
 					else {
+						if (startsWith(methodData[1],"/"))
+							methodData[1] = methodData[1][1 .. $];
+						
 						if (canFind(methodData[1], "?")) {
 							auto pageData = split(methodData[1], "?");
 							m_requestPath = pageData[0];
@@ -137,16 +149,6 @@ public:
 					
 					auto fileData = split(m_requestPath, ".");
 					m_mime = getMime(fileData[$-1]);
-				}
-			}
-			else if (canFind("&", line) && m_post) {
-				auto postDatas = split(line, "&");
-				foreach (post; postDatas) {
-					if (!canFind(post, "="))
-						continue;
-				
-					auto postData = split(post, "=");
-					m_postData[postData[0]] = postData[1];
 				}
 			}
 			else {
@@ -177,13 +179,61 @@ public:
 						case "connection":
 							m_keepAlive = (headData[1] == "keep-alive");
 							break;
+						case "content-length":
+							m_contentLength = to!ptrdiff_t(headData[1]);
+							break;
 						default:
 							break;
 					}
 				}
+				else if (m_post) {
+					contentLine = i;
+					break;
+				}
+				/* if (canFind(line, "&") && m_post) {
+					auto postDatas = split(line, "&");
+					foreach (post; postDatas) {
+						if (!canFind(post, "="))
+							continue;
+				
+						auto postData = split(post, "=");
+						m_postData[postData[0]] = postData[1];
+					}
+				}*/
 			}
 		}
+		
 		m_valid = foundMethod;
+		
+		if (m_contentLength > 0) {
+			string content;
+			size_t lineCount;
+			foreach (i; 0 .. httpHead.length) {
+				if (lineCount >= contentLine) {
+					content ~= httpHead[i];
+					m_contentLength--;
+				}
+				else if (httpHead[i] == '\n')
+					lineCount++;
+			}
+			if (content) {
+				if (canFind(content, "=")) {
+					auto postDatas = split(content, "&");
+					foreach (post; postDatas) {
+						if (!canFind(post, "="))
+							continue;
+				
+						auto postData = split(post, "=");
+						string value = postData[1];
+						value = replace(value, "+", " ");
+						value = replace(value, "\r", "");
+						m_postData[postData[0]] = replace(value, "\n", "");
+					}
+				}
+			}
+			
+			m_contentLength -= content.length;
+		}
 	}
 	
 	@property {
@@ -245,5 +295,56 @@ public:
 		*	Returns true if the request is valid.
 		*/
 		bool valid() { return m_valid; }
+		
+		/**
+		*	Gets the content length.
+		*/
+		ptrdiff_t contentLength() { return m_contentLength; }
+	}
+	
+	/**
+	*	Adds queries to the query string.
+	*/
+	void addQueries(string[] queries) {
+		foreach (query; queries) {
+			auto queryData = split(query, "=");
+			m_queryString[queryData[0]] = queryData[1];
+		}
+	}
+	
+	/**
+	*	Adds posts to the post data.
+	*/
+	void addPosts(string[] posts) {
+		foreach (post; posts) {
+			auto postData = split(post, "=");
+			m_postData[postData[0]] = postData[1];
+		}
+	}
+	
+	string toDVariables() {
+		string[] vars;
+		import std.array : join;
+		vars ~= "string[string] postData;";
+		foreach (postKey; m_postData.keys) {
+			vars ~= "postData[\"" ~ postKey ~ "\"] = \"" ~ m_postData[postKey] ~ "\";";
+		}
+		vars ~= "string[string] queryString;";
+		foreach (queryKey; m_queryString.keys) {
+			vars ~= "queryString[\"" ~ queryKey ~ "\"] = \"" ~ m_queryString[queryKey] ~ "\";";
+		}
+		vars ~= "bool post = " ~ to!string(m_post) ~ ";";
+		vars ~= "string httpVersion = \"" ~ m_httpVersion ~ "\";";
+		vars ~= "string hostIP = \"" ~ m_hostIP ~ "\";";
+		vars ~= "ushort hostPort = " ~ to!string(m_hostPort) ~ ";";
+		vars ~= "string userAgent = \"" ~ m_userAgent ~ "\";";
+		vars ~= "string acceptType = \"" ~ m_acceptType ~ "\";";
+		vars ~= "string acceptLanguage = \"" ~ m_acceptLanguage ~ "\";";
+		vars ~= "string acceptEncoding = \"" ~ m_acceptEncoding ~ "\";";
+		vars ~= "bool keepAlive = " ~ to!string(m_keepAlive) ~ ";";
+		vars ~= "string requestPath = \"" ~ m_requestPath ~ "\";";
+		vars ~= "string remoteAddress = \"" ~ m_remoteAddress ~ "\";";
+		vars ~= "string mime = \"" ~ m_mime ~ "\";";
+		return join(vars, "\r\n");
 	}
 }

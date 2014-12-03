@@ -46,8 +46,12 @@ private void onReceive(AsyncTcpSocket client) {
 	
 	import daweb.process;
 	import daweb.request;
+	try {
 	processHttp(client, new HttpRequest(client.socket.remoteAddress().toString(), cast(string)buffer));
-	
+	} catch (Throwable t) {
+		writeln("ERROR");
+		writeln(t);
+	}
 	client.close();
 }
 
