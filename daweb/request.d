@@ -13,11 +13,6 @@ import std.string;
 import daweb.mime;
 
 /**
-*	The default page.
-*/
-private const string defaultPage = "index.dml";
-
-/**
 *	A http request wrapper.
 */
 class HttpRequest {
@@ -126,8 +121,11 @@ public:
 						foundMethod = true;
 					}
 					
+					import daweb.settings;
+					auto settings = getSettings();
+					
 					if(methodData[1] == "/") {
-						m_requestPath = defaultPage;
+						m_requestPath = settings.read!string("DefaultPage");
 					}
 					else {
 						if (startsWith(methodData[1],"/"))

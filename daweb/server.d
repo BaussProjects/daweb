@@ -11,12 +11,20 @@ import std.stdio : writeln;
 import dasocks;
 
 import daweb.mime;
+import daweb.settings;
 
 /**
 *	Starts and runs the web server.
 */
-void run(string ip, ushort port) {
+void run() {
+	loadSettings();
 	loadMime();
+	
+	auto settings = getSettings();
+	
+	string ip = settings.read!string("IP");
+	ushort port = settings.read!ushort("Port");
+	int backlog = settings.read!int("Backlog");
 	
     auto server = new AsyncTcpSocket;
     server.setEvents(new AsyncSocketEvent(&onAccept), new AsyncSocketEvent(&onReceive), new AsyncSocketEvent(&onDisconnect));
@@ -30,7 +38,8 @@ void run(string ip, ushort port) {
 */
 private void onAccept(AsyncTcpSocket server) {
     auto socket = server.endAccept();
-    socket.beginReceive(4096);
+	auto settings = getSettings();
+    socket.beginReceive(settings.read!size_t("HeaderSize"));
 
     server.beginAccept();
 }
@@ -47,12 +56,15 @@ private void onReceive(AsyncTcpSocket client) {
 	import daweb.process;
 	import daweb.request;
 	try {
-	processHttp(client, new HttpRequest(client.socket.remoteAddress().toString(), cast(string)buffer));
-	} catch (Throwable t) {
+		processHttp(client, new HttpRequest(client.socket.remoteAddress().toString(), cast(string)buffer));
+	}
+	catch (Throwable t) {
 		writeln("ERROR");
 		writeln(t);
 	}
-	client.close();
+	finally {
+		client.close();
+	}
 }
 
 /**

@@ -13,40 +13,54 @@ import dasocks;
 
 import daweb.session;
 import daweb.request;
+import daweb.tools : selectUntil, isBlank;
+import daweb.settings;
 
 /**
 *	Processes a http request.
 */
 void processHttp(AsyncTcpSocket httpClient, HttpRequest request) {
-	import std.stdio;
+	import std.stdio : writeln;
+	auto settings = getSettings();
+	string webFolder = settings.read!string("WebFolder") ~ "\\";
 	
 	if (request.contentLength > 0) {
-		ubyte[] buf = httpClient.waitReceive(request.contentLength);
-		if (buf) {
-			if (buf.length > 0) {
-				string content = cast(string)buf;
-			}
-		}
+		import std.stdio;
+		writeln(request.contentLength);
+		//ubyte[] buf = httpClient.waitReceive(request.contentLength);
+		//if (buf) {
+		//	if (buf.length > 0) {
+		//		string content = cast(string)buf;
+		//		TODO: handle content
+		//		FIX: handle encoding types for forms
+		//	}
+		//}
 	}
 	
-	if (!exists("www\\" ~ request.requestPath) || endsWith(request.requestPath, ".d")) {
+	if (!exists(webFolder ~ request.requestPath)) {
 		string html = "<html><head><title>404</title></head><body><p>File Not Found!</p></body></html>";
 		
 		auto session = new HttpSession;
 		session.addHeader("HTTP/1.0 200 OK\r\n");
 		session.addHeader("Content-Type: " ~ request.mime ~ "\r\n");
 			
-		if (exists("www\\error.dml")) {
+		if (exists(webFolder ~ "\\error.d")) {
 			request.addQueries(["type=404","page=" ~ request.requestPath]);
 			
-			html = readText("www\\error.dml");
-			html = processScript(httpClient, request, session, "www\\error.dml.d", html);
+			html = readText(webFolder ~ "\\error.d");
+			
+			if (!startsWith(html, "<html>")) {
+				size_t nextIndex;
+				string dCode = selectUntil(html, 0, "<html>", nextIndex);
+				html = html[nextIndex .. $];
+	
+				html = processScript(httpClient, request, session, dCode, html, webFolder ~ "\\error.d");
+			}
 		}
 		
 		session.addHeader("Content-Length: " ~ to!string(html.length) ~ "\r\n\r\n");
 		session.addContent(html);
 		httpClient.send(session.finish());
-		httpClient.close();
 		return;
 	}
 	
@@ -55,10 +69,17 @@ void processHttp(AsyncTcpSocket httpClient, HttpRequest request) {
 		session.addHeader("HTTP/1.0 200 OK\r\n");
 		session.addHeader("Content-Type: " ~ request.mime ~ "\r\n");
 		
-		string html = readText("www\\" ~ request.requestPath);
-		if (endsWith(request.requestPath, ".dml"))
-			html = processScript(httpClient, request, session, "www\\" ~ request.requestPath ~ ".d", html);
-			
+		string html = readText(webFolder ~ "\\" ~ request.requestPath);
+		if (endsWith(request.requestPath, ".d")) {
+			if (!startsWith(html, "<html>")) {
+				size_t nextIndex;
+				string dCode = selectUntil(html, 0, "<html>", nextIndex);
+				html = html[nextIndex .. $];
+	
+				html = processScript(httpClient, request, session, dCode, html, request.requestPath);
+			}
+		}
+		
 		if (startsWith(html, "{R}") && html.length > 3) {
 			string redirect = html[3 .. $];
 			session.redirect(redirect);
@@ -73,48 +94,38 @@ void processHttp(AsyncTcpSocket httpClient, HttpRequest request) {
 		session.addHeader("HTTP/1.0 200 OK\r\n");
 		session.addHeader("Content-Type: " ~ request.mime ~ "\r\n");
 		
-		ubyte[] img = cast(ubyte[])read("www\\" ~ request.requestPath);
+		ubyte[] img = cast(ubyte[])read(webFolder ~ "\\" ~ request.requestPath);
 		session.addHeader("Content-Length: " ~ to!string(img.length) ~ "\r\n\r\n");
 		httpClient.send(session.finish());
 		httpClient.send(img);
 	}
-	
-	httpClient.close();
 }
 
 /**
 *	Processes the script in the html blocks.
 */
-string processScript(AsyncTcpSocket httpClient, HttpRequest request, HttpSession session, string dmlFile, string html) {
+string processScript(AsyncTcpSocket httpClient, HttpRequest request, HttpSession session, string dCode, string html, string dFile) {
+	auto settings = getSettings();
+	if (!settings.read!bool("UseDScripts"))
+		return html;
+
 	import std.process;
 	import std.file;
 	import std.array;
 	import std.stdio : writeln;
 
-	if (!exists(dmlFile))
+	if (isBlank(dCode))
 		return html;
 
 	string id = to!string(httpClient.socketId);
 	write(id ~ ".dml", html);
-	string dCode = readText(dmlFile);
 	
-	string[] templates = [
-		"module main;",
-		"import std.file;",
-		"void main(string[] args) {",
-		"string id = args[$-1];",
-		"string path = args[$-2];",
-		"string htmlFile = path ~ id ~ \".dml\";",
-		"@VARS",
-		"if (exists(htmlFile)) {",
-		"@FUNCS",
-		"string html = readText(htmlFile);",
-		"@CODE",
-		"write(htmlFile, html);",
-		"}",
-		"}"
-	];
-	string templateCode = join(templates, "\r\n");
+	string templateCode = readText("conf\\template.d");
+	
+	bool RootFileModificationOnly = settings.read!bool("RootFileModificationOnly");
+	templateCode = replace(templateCode, "@RootFileModificationOnly", to!string(RootFileModificationOnly));	
+	templateCode = replace(templateCode, "@WebFolder", settings.read!string("WebFolder"));
+	
 	templateCode = replace(templateCode, "@VARS", request.toDVariables());
 	string funcs;
 	foreach (string name; dirEntries("funcs", SpanMode.depth))
@@ -139,8 +150,10 @@ string processScript(AsyncTcpSocket httpClient, HttpRequest request, HttpSession
                         std.stdio.stdin,
                         std.stdio.stdout,
                         std.stdio.stderr);
-	if (wait(pid) != 0)
-		writeln("Compilation failed for ", dmlFile);
+	bool valid = (wait(pid) == 0);
+	if (!valid) {
+		writeln("Compilation failed for ", dFile);
+	}
 	
 	if (exists(id ~ ".d"))
 		remove(id ~ ".d");
@@ -149,13 +162,15 @@ string processScript(AsyncTcpSocket httpClient, HttpRequest request, HttpSession
 	if (exists(id ~ ".exe"))
 		remove(id ~ ".exe");
 	if (exists(id ~ ".dml")) {
-		html = readText(id ~ ".dml");
+		if (valid)
+			html = readText(id ~ ".dml");
 		remove(id ~ ".dml");
 	}
 	if (exists(id ~ ".red")) {
 		string r = "{R}" ~ readText(id ~ ".red");
 		remove(id ~ ".red");
-		html = r;
+		if (valid)
+			html = r;
 	}
 		
 	return html;

@@ -11,10 +11,21 @@ module daweb.mime;
 private shared string[string] mimeCollection;
 
 /**
-*	Loads the mime types from conf\\mime.dat
+*	Loads the mime types from conf\\mime.ini
 */
 void loadMime() {
-	import std.file;
+	import daweb.settings;
+	auto mimeDat = getFile("mime.ini");
+	if (!mimeDat.exists()) {
+		addMime(".dml", "text/html", true);
+	}
+	else {
+		mimeDat.open();
+		foreach (key; mimeDat.keys)
+			addMime(key, mimeDat.read!string(key));
+	}
+	mimeDat.close();
+	/*import std.file;
 	import std.algorithm : startsWith;
 	import std.array : replace, split;
 	auto text = readText("conf\\mime.dat");
@@ -29,7 +40,7 @@ void loadMime() {
 				}
 			}
 		}
-	}
+	}*/
 }
 
 /**
