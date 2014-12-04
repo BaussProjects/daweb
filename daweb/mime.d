@@ -25,22 +25,6 @@ void loadMime() {
 			addMime(key, mimeDat.read!string(key));
 	}
 	mimeDat.close();
-	/*import std.file;
-	import std.algorithm : startsWith;
-	import std.array : replace, split;
-	auto text = readText("conf\\mime.dat");
-	text = replace(text, "\r", "");
-	auto lines = split(text, "\n");
-	foreach (line; lines) {
-		if (line && line.length) {
-			if (line != "" && !startsWith(line, ";;")) {
-				auto data = split(line, "=");
-				if (data.length == 2) {
-					addMime(data[0], data[1]);
-				}
-			}
-		}
-	}*/
 }
 
 /**
